@@ -1,4 +1,4 @@
-# Codex Helper
+# codex_tip_for_mac codex红绿灯
 
 macOS 原生菜单栏应用，用悬浮窗实时展示 **Codex 运行状态** 与 **ChatGPT 订阅额度**（5 小时 / 周窗口）。
 
