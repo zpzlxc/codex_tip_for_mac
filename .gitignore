@@ -1,0 +1,16 @@
+# Swift 构建产物
+.build/
+*.xcodeproj
+*.xcworkspace
+DerivedData/
+
+# 打包输出（本地 build.sh 生成）
+dist/
+
+# macOS
+.DS_Store
+
+# 编辑器
+.idea/
+*.swp
+*.swo
