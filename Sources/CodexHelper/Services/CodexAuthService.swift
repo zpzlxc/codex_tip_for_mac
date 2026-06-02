@@ -7,6 +7,10 @@ enum CodexAuthService {
     private static let refreshURL = URL(string: "https://auth.openai.com/oauth/token")!
     private static let usageURL = URL(string: "https://chatgpt.com/backend-api/wham/usage")!
 
+    static func resolveCodexHomeURL() -> URL {
+        resolveAuthFileURL().deletingLastPathComponent()
+    }
+
     static func resolveAuthFileURL() -> URL {
         if let codexHome = ProcessInfo.processInfo.environment["CODEX_HOME"],
            !codexHome.isEmpty {
@@ -37,6 +41,12 @@ enum CodexAuthService {
         }
 
         throw CodexAuthError.notFound
+    }
+
+    /// 从 id_token 解析登录邮箱
+    static func loadAccountEmail() -> String? {
+        guard let idToken = loadIdToken() else { return nil }
+        return decodeJWTPayload(idToken)?["email"] as? String
     }
 
     static func ensureFreshCredentials() async throws -> CodexOAuthCredentials {
@@ -95,22 +105,11 @@ enum CodexAuthService {
         let data = try Data(contentsOf: url)
         guard
             let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let tokens = json["tokens"] as? [String: Any],
-            let accessToken = tokens["access_token"] as? String,
-            let refreshToken = tokens["refresh_token"] as? String
+            let credentials = parseCredentials(from: json)
         else {
             throw CodexAuthError.invalidFormat
         }
-
-        let accountId = tokens["account_id"] as? String
-        let lastRefresh = (json["last_refresh"] as? String).flatMap(isoDate)
-
-        return CodexOAuthCredentials(
-            accessToken: accessToken,
-            refreshToken: refreshToken,
-            accountId: accountId,
-            lastRefresh: lastRefresh
-        )
+        return credentials
     }
 
     private static func save(_ credentials: CodexOAuthCredentials) throws {
@@ -182,9 +181,73 @@ enum CodexAuthService {
         guard status == errSecSuccess,
               let data = item as? Data,
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let credentials = parseCredentials(from: json)
+        else {
+            return nil
+        }
+
+        return credentials
+    }
+
+    private static func loadIdToken() -> String? {
+        let fileURL = resolveAuthFileURL()
+        if FileManager.default.fileExists(atPath: fileURL.path),
+           let data = try? Data(contentsOf: fileURL),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let tokens = json["tokens"] as? [String: Any],
+           let idToken = tokens["id_token"] as? String,
+           !idToken.isEmpty {
+            return idToken
+        }
+
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: "Codex Auth",
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+
+        var item: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+              let data = item as? Data,
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let tokens = json["tokens"] as? [String: Any],
-              let accessToken = tokens["access_token"] as? String,
-              let refreshToken = tokens["refresh_token"] as? String
+              let idToken = tokens["id_token"] as? String,
+              !idToken.isEmpty
+        else {
+            return nil
+        }
+
+        return idToken
+    }
+
+    private static func decodeJWTPayload(_ token: String) -> [String: Any]? {
+        let segments = token.split(separator: ".")
+        guard segments.count >= 2 else { return nil }
+
+        var base64 = String(segments[1])
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        let padding = (4 - base64.count % 4) % 4
+        if padding > 0 {
+            base64 += String(repeating: "=", count: padding)
+        }
+
+        guard
+            let data = Data(base64Encoded: base64),
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return nil
+        }
+
+        return json
+    }
+
+    private static func parseCredentials(from json: [String: Any]) -> CodexOAuthCredentials? {
+        guard
+            let tokens = json["tokens"] as? [String: Any],
+            let accessToken = tokens["access_token"] as? String,
+            let refreshToken = tokens["refresh_token"] as? String
         else {
             return nil
         }
@@ -193,17 +256,7 @@ enum CodexAuthService {
             accessToken: accessToken,
             refreshToken: refreshToken,
             accountId: tokens["account_id"] as? String,
-            lastRefresh: (json["last_refresh"] as? String).flatMap(isoDate)
+            lastRefresh: (json["last_refresh"] as? String).flatMap(CodexDateParser.parseISO8601)
         )
-    }
-
-    private static func isoDate(_ value: String) -> Date? {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = formatter.date(from: value) {
-            return date
-        }
-        formatter.formatOptions = [.withInternetDateTime]
-        return formatter.date(from: value)
     }
 }

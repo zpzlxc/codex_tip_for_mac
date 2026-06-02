@@ -3,10 +3,10 @@ import Foundation
 
 @MainActor
 final class AppState: ObservableObject {
-    @Published var runStatus: CodexRunStatus = .idle
     @Published var quotaWindows: [QuotaWindow] = []
     @Published var tasks: [CodexTask] = []
     @Published var planType: String?
+    @Published var accountEmail: String?
     @Published var lastUsageRefresh: Date?
     @Published var lastTaskRefresh: Date?
     @Published var errorMessage: String?
@@ -26,23 +26,12 @@ final class AppState: ObservableObject {
     private var lastUsageFetchAttempt: Date?
 
     func start() {
+        SettingsStorage.load(into: self)
+        accountEmail = CodexAuthService.loadAccountEmail()
         refreshTasks()
         Task { await refreshUsage() }
-
-        taskTimer = Timer.scheduledTimer(withTimeInterval: taskPollingInterval, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                self?.refreshTasks()
-            }
-        }
-
-        usageTimer = Timer.scheduledTimer(withTimeInterval: usagePollingInterval, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                await self?.refreshUsage()
-            }
-        }
-
-        if let timer = taskTimer { RunLoop.main.add(timer, forMode: .common) }
-        if let timer = usageTimer { RunLoop.main.add(timer, forMode: .common) }
+        restartTaskTimer()
+        restartUsageTimer()
 
         fileWatcher = CodexFileWatcher(paths: watchPaths()) { [weak self] in
             Task { @MainActor in
@@ -52,11 +41,40 @@ final class AppState: ObservableObject {
         fileWatcher?.start()
     }
 
+    /// 设置页修改轮询间隔后重建定时器
+    func applyPollingSettings() {
+        restartTaskTimer()
+        restartUsageTimer()
+    }
+
+    private func restartTaskTimer() {
+        restartTimer(&taskTimer, interval: taskPollingInterval) { [weak self] in
+            self?.refreshTasks()
+        }
+    }
+
+    private func restartUsageTimer() {
+        restartTimer(&usageTimer, interval: usagePollingInterval) { [weak self] in
+            Task { await self?.refreshUsage() }
+        }
+    }
+
+    private func restartTimer(_ timer: inout Timer?, interval: TimeInterval, action: @escaping @MainActor () -> Void) {
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { _ in
+            Task { @MainActor in
+                action()
+            }
+        }
+        if let timer {
+            RunLoop.main.add(timer, forMode: .common)
+        }
+    }
+
     func refreshTasks() {
         let activeTasks = taskMonitor.scanActiveTasks()
         tasks = activeTasks
         lastTaskRefresh = Date()
-        runStatus = deriveRunStatus(from: activeTasks)
     }
 
     func refreshUsage(force: Bool = false) async {
@@ -78,51 +96,46 @@ final class AppState: ObservableObject {
             quotaWindows = buildQuotaWindows(from: usage)
             lastUsageRefresh = Date()
             errorMessage = nil
+            if accountEmail == nil {
+                accountEmail = CodexAuthService.loadAccountEmail()
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
     }
 
-    private func deriveRunStatus(from tasks: [CodexTask]) -> CodexRunStatus {
-        if tasks.contains(where: { $0.state == .waiting }) {
-            return .waiting
-        }
-        if tasks.contains(where: { $0.state == .running }) {
-            return .running
-        }
-        return .idle
+    private func buildQuotaWindows(from usage: CodexUsageResponse) -> [QuotaWindow] {
+        [
+            makeQuotaWindow(
+                id: "primary",
+                snapshot: usage.rateLimit?.primaryWindow,
+                fallback: "5小时剩余",
+                accent: .primary
+            ),
+            makeQuotaWindow(
+                id: "secondary",
+                snapshot: usage.rateLimit?.secondaryWindow,
+                fallback: "周剩余",
+                accent: .secondary
+            )
+        ].compactMap { $0 }
     }
 
-    private func buildQuotaWindows(from usage: CodexUsageResponse) -> [QuotaWindow] {
-        var windows: [QuotaWindow] = []
-
-        if let primary = usage.rateLimit?.primaryWindow {
-            windows.append(
-                QuotaWindow(
-                    id: "primary",
-                    label: windowLabel(seconds: primary.limitWindowSeconds, fallback: "5小时剩余"),
-                    usedPercent: primary.usedPercent,
-                    resetAt: primary.resetAt.map { Date(timeIntervalSince1970: TimeInterval($0)) },
-                    resetAfterSeconds: primary.resetAfterSeconds,
-                    accent: .primary
-                )
-            )
-        }
-
-        if let secondary = usage.rateLimit?.secondaryWindow {
-            windows.append(
-                QuotaWindow(
-                    id: "secondary",
-                    label: windowLabel(seconds: secondary.limitWindowSeconds, fallback: "周剩余"),
-                    usedPercent: secondary.usedPercent,
-                    resetAt: secondary.resetAt.map { Date(timeIntervalSince1970: TimeInterval($0)) },
-                    resetAfterSeconds: secondary.resetAfterSeconds,
-                    accent: .secondary
-                )
-            )
-        }
-
-        return windows
+    private func makeQuotaWindow(
+        id: String,
+        snapshot: CodexUsageResponse.WindowSnapshot?,
+        fallback: String,
+        accent: QuotaAccent
+    ) -> QuotaWindow? {
+        guard let snapshot else { return nil }
+        return QuotaWindow(
+            id: id,
+            label: windowLabel(seconds: snapshot.limitWindowSeconds, fallback: fallback),
+            usedPercent: snapshot.usedPercent,
+            resetAt: snapshot.resetAt.map { Date(timeIntervalSince1970: TimeInterval($0)) },
+            resetAfterSeconds: snapshot.resetAfterSeconds,
+            accent: accent
+        )
     }
 
     private func windowLabel(seconds: Int?, fallback: String) -> String {
@@ -135,7 +148,7 @@ final class AppState: ObservableObject {
     }
 
     private func watchPaths() -> [URL] {
-        let home = CodexAuthService.resolveAuthFileURL().deletingLastPathComponent()
+        let home = CodexAuthService.resolveCodexHomeURL()
         return [
             home.appendingPathComponent("process_manager/chat_processes.json"),
             home.appendingPathComponent("sessions"),

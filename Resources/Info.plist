@@ -6,6 +6,8 @@
     <string>zh-Hans</string>
     <key>CFBundleExecutable</key>
     <string>CodexHelper</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
     <string>com.zpzlxc.codex-helper</string>
     <key>CFBundleInfoDictionaryVersion</key>

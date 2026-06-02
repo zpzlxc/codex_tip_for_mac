@@ -16,7 +16,7 @@ enum CodexRunStatus: String, Sendable {
 }
 
 /// 单个任务状态
-enum CodexTaskState: String, Sendable, CaseIterable {
+enum CodexTaskState: String, Sendable {
     case running
     case waiting
     case idle
@@ -30,15 +30,6 @@ enum CodexTaskState: String, Sendable, CaseIterable {
         case .idle: return "空闲"
         case .completed: return "已完成"
         case .failed: return "失败"
-        }
-    }
-
-    var indicatorColor: String {
-        switch self {
-        case .running: return "yellow"
-        case .waiting: return "red"
-        case .idle, .completed: return "green"
-        case .failed: return "red"
         }
     }
 }

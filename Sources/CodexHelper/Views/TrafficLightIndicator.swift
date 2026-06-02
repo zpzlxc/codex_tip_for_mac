@@ -172,9 +172,15 @@ struct LEDLensView: View {
         .clipShape(Circle())
         .overlay(
             Circle()
-                .stroke(Color.white.opacity(isActive ? 0.15 : 0.05), lineWidth: 0.4)
+                .stroke(
+                    isActive ? Color.white.opacity(0.15) : color.inactiveRingColor,
+                    lineWidth: isActive ? 0.4 : 1.0
+                )
         )
-        .shadow(color: color.glowColor.opacity(isActive ? 0.75 : 0), radius: isActive ? 7 : 0)
+        .shadow(
+            color: color.glowColor.opacity(isActive ? 0.75 : 0.22),
+            radius: isActive ? 7 : 2
+        )
     }
 
     private func ledDotPositions(in size: CGSize, isActive: Bool) -> [CGPoint] {
@@ -246,20 +252,29 @@ enum LEDTrafficColor {
         }
     }
 
+    /// 熄灭时的彩色描边，便于区分红 / 黄 / 绿
+    var inactiveRingColor: Color {
+        switch self {
+        case .red: return Color(red: 0.82, green: 0.18, blue: 0.16).opacity(0.85)
+        case .amber: return Color(red: 0.88, green: 0.58, blue: 0.08).opacity(0.85)
+        case .green: return Color(red: 0.18, green: 0.72, blue: 0.34).opacity(0.85)
+        }
+    }
+
     func lensGradient(isActive: Bool) -> [Color] {
         switch self {
         case .red:
             return isActive
                 ? [Color(red: 1.0, green: 0.28, blue: 0.22), Color(red: 0.55, green: 0.04, blue: 0.06)]
-                : [Color(red: 0.18, green: 0.05, blue: 0.05), Color(red: 0.08, green: 0.02, blue: 0.02)]
+                : [Color(red: 0.62, green: 0.14, blue: 0.13), Color(red: 0.34, green: 0.07, blue: 0.07)]
         case .amber:
             return isActive
                 ? [Color(red: 1.0, green: 0.72, blue: 0.18), Color(red: 0.72, green: 0.38, blue: 0.02)]
-                : [Color(red: 0.18, green: 0.12, blue: 0.03), Color(red: 0.08, green: 0.05, blue: 0.01)]
+                : [Color(red: 0.66, green: 0.44, blue: 0.08), Color(red: 0.38, green: 0.24, blue: 0.04)]
         case .green:
             return isActive
                 ? [Color(red: 0.28, green: 0.98, blue: 0.48), Color(red: 0.04, green: 0.52, blue: 0.18)]
-                : [Color(red: 0.04, green: 0.14, blue: 0.06), Color(red: 0.02, green: 0.07, blue: 0.03)]
+                : [Color(red: 0.16, green: 0.48, blue: 0.22), Color(red: 0.08, green: 0.28, blue: 0.12)]
         }
     }
 
@@ -268,7 +283,7 @@ enum LEDTrafficColor {
         if isActive {
             return glowColor.opacity(0.55 + falloff * 0.45)
         }
-        return glowColor.opacity(0.08 + falloff * 0.06)
+        return glowColor.opacity(0.30 + falloff * 0.25)
     }
 }
 

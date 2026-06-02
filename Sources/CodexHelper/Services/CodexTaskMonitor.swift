@@ -4,14 +4,7 @@ import SQLite3
 /// 通过本地 Codex 数据检测运行中的任务（无网络请求）
 final class CodexTaskMonitor: @unchecked Sendable {
     private let fileManager = FileManager.default
-    private let queue = DispatchQueue(label: "codex.task.monitor", qos: .utility)
-
-    private var codexHome: URL {
-        if let env = ProcessInfo.processInfo.environment["CODEX_HOME"], !env.isEmpty {
-            return URL(fileURLWithPath: env)
-        }
-        return fileManager.homeDirectoryForCurrentUser.appendingPathComponent(".codex")
-    }
+    private let codexHome = CodexAuthService.resolveCodexHomeURL()
 
     func scanActiveTasks() -> [CodexTask] {
         var tasks: [CodexTask] = []
@@ -132,7 +125,7 @@ final class CodexTaskMonitor: @unchecked Sendable {
             }
 
             let eventType = obj["type"] as? String
-            let timestamp = (obj["timestamp"] as? String).flatMap(parseTimestamp) ?? modifiedAt
+            let timestamp = (obj["timestamp"] as? String).flatMap(CodexDateParser.parseISO8601) ?? modifiedAt
 
             if eventType == "session_meta" {
                 threadId = payload["id"] as? String ?? threadId
@@ -210,7 +203,7 @@ final class CodexTaskMonitor: @unchecked Sendable {
         if let started = lastTaskStarted {
             if let completed = lastTaskComplete {
                 if started > completed, recentlyModified {
-                    return hasPendingToolCall ? .running : .running
+                    return .running
                 }
             } else if recentlyModified {
                 return .running
@@ -332,15 +325,5 @@ final class CodexTaskMonitor: @unchecked Sendable {
             return nil
         }
         return String(filename[range])
-    }
-
-    private func parseTimestamp(_ value: String) -> Date? {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = formatter.date(from: value) {
-            return date
-        }
-        formatter.formatOptions = [.withInternetDateTime]
-        return formatter.date(from: value)
     }
 }

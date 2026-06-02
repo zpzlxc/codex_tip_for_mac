@@ -18,3 +18,29 @@ enum WidgetTheme {
     static let accentBlue = Color(red: 0.22, green: 0.52, blue: 0.96)
     static let accentPurple = Color(red: 0.52, green: 0.38, blue: 0.92)
 }
+
+enum WidgetFormatters {
+    private static let shortTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        return formatter
+    }()
+
+    private static let preciseResetFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "yyyy/MM/dd ahh:mm:ss"
+        return formatter
+    }()
+
+    static func shortTime(_ date: Date) -> String {
+        shortTimeFormatter.string(from: date)
+    }
+
+    static func preciseReset(_ date: Date) -> String {
+        preciseResetFormatter
+            .string(from: date)
+            .replacingOccurrences(of: "上午 ", with: "上午")
+            .replacingOccurrences(of: "下午 ", with: "下午")
+    }
+}

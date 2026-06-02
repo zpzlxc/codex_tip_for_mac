@@ -4,9 +4,6 @@ struct StatusWidgetView: View {
     @ObservedObject var appState: AppState
     var onClose: () -> Void
 
-    private let trafficLightColumnWidth: CGFloat = 54
-    private let infoBlockHeight: CGFloat = TrafficLightIndicator.fixedHeight
-
     private var hasActiveTasks: Bool {
         !appState.tasks.isEmpty
     }
@@ -39,7 +36,7 @@ struct StatusWidgetView: View {
 
     private var headerSection: some View {
         HStack(alignment: .center) {
-            Text("Codex 运行状态 & 额度监控")
+            Text("Codex 额度监控")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(WidgetTheme.title)
 
@@ -59,26 +56,29 @@ struct StatusWidgetView: View {
         }
     }
 
-    // MARK: - 主区域：左红绿灯 + 右状态与额度
+    // MARK: - 主区域：账号与额度
 
     private var mainSection: some View {
-        HStack(alignment: .top, spacing: 12) {
-            TrafficLightIndicator(active: appState.runStatus)
-                .frame(width: trafficLightColumnWidth, height: infoBlockHeight)
-
-            VStack(alignment: .leading, spacing: 10) {
-                statusInfoBlock
-                quotaBlock
-            }
-            .frame(maxWidth: .infinity, minHeight: infoBlockHeight, alignment: .topLeading)
+        VStack(alignment: .leading, spacing: 10) {
+            accountInfoBlock
+            quotaBlock
         }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
-    private var statusInfoBlock: some View {
+    private var accountInfoBlock: some View {
         HStack(spacing: 8) {
-            Text("当前：\(appState.runStatus.label)")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(WidgetTheme.primaryText)
+            if let email = appState.accountEmail {
+                Text(email)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(WidgetTheme.primaryText)
+                    .lineLimit(1)
+                    .help(email)
+            } else {
+                Text("未读取到登录邮箱")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(WidgetTheme.secondaryText)
+            }
 
             if let plan = appState.planType {
                 Text(plan.uppercased())
@@ -163,15 +163,9 @@ struct StatusWidgetView: View {
     }
 
     private var refreshHint: String {
-        let usage = appState.lastUsageRefresh.map(formatTime) ?? "未刷新"
-        let tasks = appState.lastTaskRefresh.map(formatTime) ?? "未刷新"
+        let usage = appState.lastUsageRefresh.map(WidgetFormatters.shortTime) ?? "未刷新"
+        let tasks = appState.lastTaskRefresh.map(WidgetFormatters.shortTime) ?? "未刷新"
         return "额度 \(usage) · 任务 \(tasks)"
-    }
-
-    private func formatTime(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm"
-        return formatter.string(from: date)
     }
 }
 
@@ -211,17 +205,10 @@ struct QuotaBarView: View {
 
     private var resetHint: String {
         let usedSuffix = "已用 \(window.usedPercent)%"
-        let resetDate = resolvedResetDate()
-
-        if let resetDate {
-            let preciseTime = formatPreciseReset(resetDate)
-            if let seconds = window.resetAfterSeconds, seconds > 0 {
-                return "\(formatDuration(seconds))后重置 · \(preciseTime) · \(usedSuffix)"
-            }
-            return "重置于 \(preciseTime) · \(usedSuffix)"
+        guard let resetDate = resolvedResetDate() else {
+            return usedSuffix
         }
-
-        return usedSuffix
+        return "\(WidgetFormatters.preciseReset(resetDate)) · \(usedSuffix)"
     }
 
     private func resolvedResetDate() -> Date? {
@@ -232,28 +219,6 @@ struct QuotaBarView: View {
             return Date().addingTimeInterval(TimeInterval(seconds))
         }
         return nil
-    }
-
-    private func formatPreciseReset(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.dateFormat = "MM/dd a h:mm:ss"
-        return formatter.string(from: date)
-    }
-
-    private func formatDuration(_ seconds: Int) -> String {
-        if seconds >= 86_400 {
-            return "\(seconds / 86_400)天"
-        }
-        if seconds >= 3600 {
-            let hours = seconds / 3600
-            let minutes = (seconds % 3600) / 60
-            return minutes > 0 ? "\(hours)小时\(minutes)分" : "\(hours)小时"
-        }
-        if seconds >= 60 {
-            return "\(seconds / 60)分钟"
-        }
-        return "\(seconds)秒"
     }
 
     private var barGradient: LinearGradient {
@@ -330,39 +295,5 @@ struct TaskRowView: View {
         let components = path.split(separator: "/")
         guard components.count > 2 else { return path }
         return components.suffix(2).joined(separator: "/")
-    }
-}
-
-struct SettingsView: View {
-    @ObservedObject var appState: AppState
-
-    var body: some View {
-        Form {
-            Section("轮询间隔") {
-                Stepper(
-                    "额度刷新：\(Int(appState.usagePollingInterval / 60)) 分钟",
-                    value: Binding(
-                        get: { appState.usagePollingInterval / 60 },
-                        set: { appState.usagePollingInterval = $0 * 60 }
-                    ),
-                    in: 5...60,
-                    step: 5
-                )
-                Stepper(
-                    "任务扫描：\(Int(appState.taskPollingInterval)) 秒",
-                    value: $appState.taskPollingInterval,
-                    in: 3...60,
-                    step: 1
-                )
-            }
-
-            Section("说明") {
-                Text("登录态来自 ~/.codex/auth.json，无需额外配置。")
-                Text("额度默认每 10 分钟请求一次，界面展示剩余百分比。手动刷新最短间隔 2 分钟。")
-            }
-        }
-        .formStyle(.grouped)
-        .frame(width: 420, height: 260)
-        .padding()
     }
 }

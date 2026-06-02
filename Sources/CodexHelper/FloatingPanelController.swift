@@ -5,25 +5,23 @@ import SwiftUI
 final class FloatingPanelController {
     private let appState: AppState
     private var panel: NSPanel?
-    private var hostingView: NSHostingView<StatusWidgetView>?
-    private var isPanelShowing = false
 
     init(appState: AppState) {
         self.appState = appState
     }
 
     var isVisible: Bool {
-        isPanelShowing
+        panel?.isVisible == true
     }
 
     func show() {
-        if panel == nil || hostingView == nil {
+        if panel == nil {
             createPanel()
         }
 
         guard let panel else { return }
 
-        if let screen = NSScreen.main, !isPanelShowing {
+        if let screen = NSScreen.main, !panel.isVisible {
             let frame = screen.visibleFrame
             panel.setFrameOrigin(
                 NSPoint(
@@ -35,16 +33,14 @@ final class FloatingPanelController {
 
         NSApp.activate(ignoringOtherApps: true)
         panel.orderFrontRegardless()
-        isPanelShowing = true
     }
 
     func hide() {
         panel?.orderOut(nil)
-        isPanelShowing = false
     }
 
     func toggle() {
-        if isPanelShowing {
+        if isVisible {
             hide()
         } else {
             show()
@@ -52,12 +48,11 @@ final class FloatingPanelController {
     }
 
     private func createPanel() {
-        let contentView = StatusWidgetView(appState: appState) {
-            NSApp.terminate(nil)
-        }
-
-        let hosting = NSHostingView(rootView: contentView)
-        hosting.translatesAutoresizingMaskIntoConstraints = false
+        let hosting = NSHostingView(
+            rootView: StatusWidgetView(appState: appState) {
+                NSApp.terminate(nil)
+            }
+        )
 
         let panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 340, height: 300),
@@ -66,16 +61,7 @@ final class FloatingPanelController {
             defer: false
         )
 
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 340, height: 300))
-        container.addSubview(hosting)
-        NSLayoutConstraint.activate([
-            hosting.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            hosting.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            hosting.topAnchor.constraint(equalTo: container.topAnchor),
-            hosting.bottomAnchor.constraint(equalTo: container.bottomAnchor)
-        ])
-
-        panel.contentView = container
+        panel.contentView = hosting
         panel.isFloatingPanel = true
         panel.level = .floating
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
@@ -87,7 +73,5 @@ final class FloatingPanelController {
         panel.becomesKeyOnlyIfNeeded = true
 
         self.panel = panel
-        self.hostingView = hosting
-        self.isPanelShowing = false
     }
 }
