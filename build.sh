@@ -38,6 +38,10 @@ elif [ -f "$ROOT/Resources/AppIcon.icns" ]; then
     cp "$ROOT/Resources/AppIcon.icns" "$RESOURCES/AppIcon.icns"
 fi
 
+if [ -f "$ROOT/Resources/MenuBarIcon.png" ]; then
+    cp "$ROOT/Resources/MenuBarIcon.png" "$RESOURCES/MenuBarIcon.png"
+fi
+
 chmod +x "$MACOS/$APP_NAME"
 
 echo ">> 完成: $APP_DIR"

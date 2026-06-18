@@ -13,8 +13,7 @@ let package = Package(
             path: "Sources/CodexHelper",
             linkerSettings: [
                 .linkedFramework("AppKit"),
-                .linkedFramework("SwiftUI"),
-                .linkedFramework("Security")
+                .linkedFramework("SwiftUI")
             ]
         )
     ]
