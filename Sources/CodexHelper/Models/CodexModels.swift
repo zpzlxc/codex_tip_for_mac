@@ -1,5 +1,22 @@
 import Foundation
 
+enum CodexActivityState: Sendable {
+    case idle
+    case running
+    case awaitingApproval
+
+    var title: String {
+        switch self {
+        case .idle:
+            return "空闲中"
+        case .running:
+            return "运行中"
+        case .awaitingApproval:
+            return "待批准"
+        }
+    }
+}
+
 /// 额度窗口快照
 struct QuotaWindow: Identifiable, Sendable {
     let id: String

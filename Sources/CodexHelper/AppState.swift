@@ -5,17 +5,21 @@ import Foundation
 final class AppState: ObservableObject {
     @Published var quotaWindows: [QuotaWindow] = []
     @Published var lastUsageRefresh: Date?
+    @Published var activityState: CodexActivityState = .idle
 
     /// 额度轮询间隔（秒），默认 10 分钟。
     var usagePollingInterval: TimeInterval = 600
 
     private var usageTimer: Timer?
+    private var activityTimer: Timer?
     private var isRefreshingUsage = false
+    private let activityMonitor = CodexActivityMonitor()
 
     func start() {
         SettingsStorage.load(into: self)
         Task { await refreshUsage() }
         restartUsageTimer()
+        restartActivityTimer()
     }
 
     func applyPollingSettings() {
@@ -31,6 +35,26 @@ final class AppState: ObservableObject {
         }
         if let usageTimer {
             RunLoop.main.add(usageTimer, forMode: .common)
+        }
+    }
+
+    private func restartActivityTimer() {
+        activityTimer?.invalidate()
+        refreshActivity()
+        activityTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.refreshActivity()
+            }
+        }
+        if let activityTimer {
+            RunLoop.main.add(activityTimer, forMode: .common)
+        }
+    }
+
+    private func refreshActivity() {
+        Task { [weak self, activityMonitor] in
+            let state = await activityMonitor.currentState()
+            self?.activityState = state
         }
     }
 

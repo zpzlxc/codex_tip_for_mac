@@ -9,6 +9,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private var primaryResetItem: NSMenuItem?
     private var secondaryResetItem: NSMenuItem?
     private var refreshUsageItem: NSMenuItem?
+    private var activityItem: NSMenuItem?
     private var cancellables = Set<AnyCancellable>()
 
     init(
@@ -44,10 +45,20 @@ final class MenuBarController: NSObject, NSMenuDelegate {
                 self?.updateDisplay()
             }
             .store(in: &cancellables)
+
+        appState.$activityState
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.updateDisplay()
+            }
+            .store(in: &cancellables)
     }
 
     private func buildMenu() -> NSMenu {
         let menu = NSMenu()
+        activityItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        menu.addItem(activityItem!)
+        menu.addItem(.separator())
         primaryResetItem = quotaInfoItem()
         secondaryResetItem = quotaInfoItem()
         menu.addItem(primaryResetItem!)
@@ -104,11 +115,12 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private var statusTitle: String {
         let primary = quotaWindow(id: "primary").map { "\($0.remainingPercent)%" } ?? "--"
         let secondary = quotaWindow(id: "secondary").map { "\($0.remainingPercent)%" } ?? "--"
-        return "5h \(primary) · 1w \(secondary)"
+        return "\(appState.activityState.title) · 5h \(primary) · 1w \(secondary)"
     }
 
     private func updateDisplay() {
-        statusItem?.button?.title = statusTitle
+        statusItem?.button?.attributedTitle = activityTitle(statusTitle)
+        activityItem?.attributedTitle = activityTitle("●  \(appState.activityState.title)")
         updateQuotaInfo(
             primaryResetItem,
             prefix: "5h 重置：",
@@ -120,6 +132,33 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             value: resetValue(window: quotaWindow(id: "secondary"))
         )
         refreshUsageItem?.title = refreshUsageTitle
+    }
+
+    private func activityTitle(_ title: String) -> NSAttributedString {
+        let result = NSMutableAttributedString(
+            string: title.hasPrefix("●") ? title : "●  \(title)",
+            attributes: [
+                .font: NSFont.menuBarFont(ofSize: 0),
+                .foregroundColor: NSColor.labelColor
+            ]
+        )
+        result.addAttribute(
+            .foregroundColor,
+            value: activityColor,
+            range: NSRange(location: 0, length: 1)
+        )
+        return result
+    }
+
+    private var activityColor: NSColor {
+        switch appState.activityState {
+        case .idle:
+            return .systemGreen
+        case .running:
+            return .systemYellow
+        case .awaitingApproval:
+            return .systemRed
+        }
     }
 
     private func updateQuotaInfo(_ item: NSMenuItem?, prefix: String, value: String) {
