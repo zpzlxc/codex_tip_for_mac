@@ -6,10 +6,12 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private let appState: AppState
     private let settingsController: SettingsWindowController
     private var statusItem: NSStatusItem?
+    private var menu: NSMenu?
     private var primaryResetItem: NSMenuItem?
     private var secondaryResetItem: NSMenuItem?
+    private var resetCreditsItem: NSMenuItem?
+    private var resetCreditExpiryItems: [NSMenuItem] = []
     private var refreshUsageItem: NSMenuItem?
-    private var activityItem: NSMenuItem?
     private var cancellables = Set<AnyCancellable>()
 
     init(
@@ -46,23 +48,32 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             }
             .store(in: &cancellables)
 
-        appState.$activityState
+        appState.$resetCredits
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.rebuildResetCreditExpiryItems()
+                self?.updateDisplay()
+            }
+            .store(in: &cancellables)
+
+        appState.$usageError
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 self?.updateDisplay()
             }
             .store(in: &cancellables)
+
     }
 
     private func buildMenu() -> NSMenu {
         let menu = NSMenu()
-        activityItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-        menu.addItem(activityItem!)
-        menu.addItem(.separator())
+        self.menu = menu
         primaryResetItem = quotaInfoItem()
         secondaryResetItem = quotaInfoItem()
         menu.addItem(primaryResetItem!)
         menu.addItem(secondaryResetItem!)
+        resetCreditsItem = quotaInfoItem()
+        menu.addItem(resetCreditsItem!)
         menu.addItem(.separator())
         refreshUsageItem = append(to: menu, title: refreshUsageTitle, action: #selector(refreshUsage))
         menu.addItem(.separator())
@@ -87,23 +98,13 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     private func quotaInfoItem() -> NSMenuItem {
         let item = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-        let prefixLabel = NSTextField(labelWithString: "")
-        prefixLabel.frame = NSRect(x: 12, y: 2, width: 70, height: 22)
-        prefixLabel.font = NSFont.menuFont(ofSize: 0)
-        prefixLabel.textColor = .labelColor
-        prefixLabel.alignment = .left
-        prefixLabel.tag = 1
+        let label = NSTextField(labelWithString: "")
+        label.frame = NSRect(x: 12, y: 2, width: 296, height: 22)
+        label.lineBreakMode = .byTruncatingTail
+        label.tag = 1
 
-        let valueLabel = NSTextField(labelWithString: "")
-        valueLabel.frame = NSRect(x: 70, y: 2, width: 180, height: 22)
-        valueLabel.font = NSFont.menuFont(ofSize: 0)
-        valueLabel.textColor = .labelColor
-        valueLabel.lineBreakMode = .byTruncatingTail
-        valueLabel.tag = 2
-
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 26))
-        container.addSubview(prefixLabel)
-        container.addSubview(valueLabel)
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 26))
+        container.addSubview(label)
         item.view = container
         return item
     }
@@ -115,56 +116,43 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private var statusTitle: String {
         let primary = quotaWindow(id: "primary").map { "\($0.remainingPercent)%" } ?? "--"
         let secondary = quotaWindow(id: "secondary").map { "\($0.remainingPercent)%" } ?? "--"
-        return "\(appState.activityState.title) · 5h \(primary) · 1w \(secondary)"
+        return "5h \(primary) · 1w \(secondary)"
     }
 
     private func updateDisplay() {
-        statusItem?.button?.attributedTitle = activityTitle(statusTitle)
-        activityItem?.attributedTitle = activityTitle("●  \(appState.activityState.title)")
+        statusItem?.button?.title = statusTitle
         updateQuotaInfo(
             primaryResetItem,
-            prefix: "5h 重置：",
+            prefix: "5h重置：",
             value: resetValue(window: quotaWindow(id: "primary"))
         )
         updateQuotaInfo(
             secondaryResetItem,
-            prefix: "1w 重置：",
+            prefix: "1w重置：",
             value: resetValue(window: quotaWindow(id: "secondary"))
+        )
+        updateQuotaInfo(
+            resetCreditsItem,
+            prefix: "可用重置：",
+            value: resetCreditsValue
         )
         refreshUsageItem?.title = refreshUsageTitle
     }
 
-    private func activityTitle(_ title: String) -> NSAttributedString {
-        let result = NSMutableAttributedString(
-            string: title.hasPrefix("●") ? title : "●  \(title)",
-            attributes: [
-                .font: NSFont.menuBarFont(ofSize: 0),
-                .foregroundColor: NSColor.labelColor
-            ]
-        )
-        result.addAttribute(
-            .foregroundColor,
-            value: activityColor,
-            range: NSRange(location: 0, length: 1)
-        )
-        return result
-    }
-
-    private var activityColor: NSColor {
-        switch appState.activityState {
-        case .idle:
-            return .systemGreen
-        case .running:
-            return .systemYellow
-        case .awaitingApproval:
-            return .systemRed
-        }
-    }
-
     private func updateQuotaInfo(_ item: NSMenuItem?, prefix: String, value: String) {
         guard let view = item?.view else { return }
-        (view.viewWithTag(1) as? NSTextField)?.stringValue = prefix
-        (view.viewWithTag(2) as? NSTextField)?.stringValue = value
+        let fontSize = NSFont.menuFont(ofSize: 0).pointSize
+        let prefixAttributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular),
+            .foregroundColor: NSColor.labelColor
+        ]
+        let valueAttributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.menuFont(ofSize: 0),
+            .foregroundColor: NSColor.labelColor
+        ]
+        let text = NSMutableAttributedString(string: prefix, attributes: prefixAttributes)
+        text.append(NSAttributedString(string: " \(value)", attributes: valueAttributes))
+        (view.viewWithTag(1) as? NSTextField)?.attributedStringValue = text
     }
 
     private var refreshUsageTitle: String {
@@ -179,10 +167,39 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     }
 
     private func resetValue(window: QuotaWindow?) -> String {
-        guard let window, let resetDate = resolvedResetDate(for: window) else {
-            return "获取中..."
+        guard let window else {
+            return appState.usageError == nil ? "获取中..." : "刷新失败"
+        }
+        guard let resetDate = resolvedResetDate(for: window) else {
+            return "暂无重置时间"
         }
         return MenuDateFormatters.resetTime(resetDate)
+    }
+
+    private var resetCreditsValue: String {
+        guard let credits = appState.resetCredits else {
+            return appState.usageError == nil ? "获取中..." : "刷新失败"
+        }
+        return "\(credits.availableCount) 次"
+    }
+
+    private func rebuildResetCreditExpiryItems() {
+        guard let menu, let refreshUsageItem else { return }
+        resetCreditExpiryItems.forEach(menu.removeItem)
+        resetCreditExpiryItems.removeAll()
+
+        let insertionIndex = menu.index(of: refreshUsageItem)
+        guard insertionIndex >= 0 else { return }
+        for (index, expiresAt) in (appState.resetCredits?.expiresAt ?? []).enumerated() {
+            let item = quotaInfoItem()
+            updateQuotaInfo(
+                item,
+                prefix: "重置\(index + 1)：",
+                value: MenuDateFormatters.resetTime(Date(timeIntervalSince1970: TimeInterval(expiresAt)))
+            )
+            menu.insertItem(item, at: insertionIndex + index)
+            resetCreditExpiryItems.append(item)
+        }
     }
 
     private func resolvedResetDate(for window: QuotaWindow) -> Date? {

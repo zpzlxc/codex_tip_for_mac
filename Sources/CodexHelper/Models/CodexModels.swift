@@ -32,6 +32,7 @@ struct QuotaWindow: Identifiable, Sendable {
 
 struct CodexAccountSnapshot: Sendable {
     let rateLimits: RateLimits
+    let resetCredits: ResetCredits?
 
     struct RateLimits: Sendable {
         let primary: Window?
@@ -41,6 +42,11 @@ struct CodexAccountSnapshot: Sendable {
     struct Window: Sendable {
         let usedPercent: Int
         let resetsAt: Int?
+    }
+
+    struct ResetCredits: Sendable {
+        let availableCount: Int
+        let expiresAt: [Int]
     }
 }
 

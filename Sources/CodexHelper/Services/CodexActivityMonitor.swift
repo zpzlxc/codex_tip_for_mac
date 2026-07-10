@@ -3,8 +3,8 @@ import Foundation
 actor CodexActivityMonitor {
     private struct SessionProgress {
         var offset: UInt64 = 0
-        var unfinishedTurns = Set<String>()
-        var pendingApprovalCalls = Set<String>()
+        var unfinishedTurns: [String: Date] = [:]
+        var pendingApprovalCalls: [String: Date] = [:]
         var trailingData = Data()
 
         var isRunning: Bool {
@@ -18,6 +18,7 @@ actor CodexActivityMonitor {
 
     private var sessions: [URL: SessionProgress] = [:]
     private let recentSessionAge: TimeInterval = 2 * 24 * 60 * 60
+    private let staleTurnAge: TimeInterval = 10 * 60
 
     func currentState() -> CodexActivityState {
         updateSessions()
@@ -63,19 +64,20 @@ actor CodexActivityMonitor {
             }
 
             activeURLs.insert(url)
-            updateSession(at: url, fileSize: UInt64(values.fileSize ?? 0))
+            updateSession(at: url, fileSize: UInt64(values.fileSize ?? 0), now: Date())
         }
 
         sessions = sessions.filter { activeURLs.contains($0.key) }
     }
 
-    private func updateSession(at url: URL, fileSize: UInt64) {
+    private func updateSession(at url: URL, fileSize: UInt64, now: Date) {
         var progress = sessions[url] ?? SessionProgress()
 
         if fileSize < progress.offset {
             progress = SessionProgress()
         }
         guard fileSize > progress.offset else {
+            pruneStaleState(from: &progress, now: now)
             sessions[url] = progress
             return
         }
@@ -92,22 +94,23 @@ actor CodexActivityMonitor {
 
             progress.offset += UInt64(newData.count)
             progress.trailingData.append(newData)
-            consumeCompleteLines(from: &progress)
+            consumeCompleteLines(from: &progress, now: now)
+            pruneStaleState(from: &progress, now: now)
             sessions[url] = progress
         } catch {
             return
         }
     }
 
-    private func consumeCompleteLines(from progress: inout SessionProgress) {
+    private func consumeCompleteLines(from progress: inout SessionProgress, now: Date) {
         while let newline = progress.trailingData.firstIndex(of: 0x0A) {
             let line = progress.trailingData.prefix(upTo: newline)
             progress.trailingData.removeSubrange(...newline)
-            consume(line: Data(line), into: &progress)
+            consume(line: Data(line), into: &progress, now: now)
         }
     }
 
-    private func consume(line: Data, into progress: inout SessionProgress) {
+    private func consume(line: Data, into progress: inout SessionProgress, now: Date) {
         guard
             let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
             let type = object["type"] as? String,
@@ -115,16 +118,20 @@ actor CodexActivityMonitor {
         else {
             return
         }
+        let eventDate = (object["timestamp"] as? String)
+            .flatMap { ISO8601DateFormatter().date(from: $0) } ?? now
 
         if type == "event_msg", let eventType = payload["type"] as? String {
             guard let turnID = payload["turn_id"] as? String else { return }
             if eventType == "task_started" {
-                progress.unfinishedTurns.insert(turnID)
+                progress.unfinishedTurns[turnID] = eventDate
             } else if eventType == "task_complete" {
-                progress.unfinishedTurns.remove(turnID)
+                progress.unfinishedTurns.removeValue(forKey: turnID)
                 if progress.unfinishedTurns.isEmpty {
                     progress.pendingApprovalCalls.removeAll()
                 }
+            } else if progress.unfinishedTurns[turnID] != nil {
+                progress.unfinishedTurns[turnID] = eventDate
             }
             return
         }
@@ -136,10 +143,22 @@ actor CodexActivityMonitor {
         if itemType == "function_call",
            let callID = payload["call_id"] as? String,
            requestsApproval(payload["arguments"]) {
-            progress.pendingApprovalCalls.insert(callID)
+            progress.pendingApprovalCalls[callID] = now
         } else if itemType == "function_call_output",
                   let callID = payload["call_id"] as? String {
-            progress.pendingApprovalCalls.remove(callID)
+            progress.pendingApprovalCalls.removeValue(forKey: callID)
+        }
+    }
+
+    private func pruneStaleState(from progress: inout SessionProgress, now: Date) {
+        progress.unfinishedTurns = progress.unfinishedTurns.filter {
+            now.timeIntervalSince($0.value) < staleTurnAge
+        }
+        progress.pendingApprovalCalls = progress.pendingApprovalCalls.filter {
+            now.timeIntervalSince($0.value) < staleTurnAge
+        }
+        if progress.unfinishedTurns.isEmpty {
+            progress.pendingApprovalCalls.removeAll()
         }
     }
 
